@@ -1,13 +1,4 @@
-#pragma ident "@(#)connectivity.c 1.2 99/09/01"
-
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-
 #include <complex>
-
 #include <mpi.h>
 
 using namespace std;
@@ -25,26 +16,64 @@ int **alloc_2d_int(int rows, int cols) {
 int
 main(int argc, char **argv)
 {
-    MPI_Status	status;
-    int		rank;
-
-    int		verbose = 1;
-    int		np;				/* number of processes in job */
-    int     maxIter = 30000;
-    int     imgCols = 200;
-    int     imgRows = 100;
-    int     imgColsStep = 10;
-    int     imgRowsStep = 10;
+    MPI_Status status;
+    int	rank;
+    int	np;				/* number of processes in job */
 
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &np);
 
+    int debug;
+    int gui;
+    int maxIter;
+    int imgCols;
+    int imgRows;
+    int imgColsStep;
+    int imgRowsStep;
+
+    std::istringstream iss0( argv[1] );
+    std::istringstream iss1( argv[2] );
+    std::istringstream iss2( argv[3] );
+    std::istringstream iss3( argv[4] );
+    std::istringstream iss4( argv[5] );
+    std::istringstream iss5( argv[6] );
+    std::istringstream iss6( argv[7] );
+
+    iss0 >> debug;
+    iss1 >> gui;
+    iss2 >> maxIter;
+    iss3 >> imgCols;
+    iss4 >> imgRows;
+    iss5 >> imgColsStep;
+    iss6 >> imgRowsStep;
+
+
+
+
     if (rank == 0) {
 
-        int     totalPartitions = imgCols / imgColsStep * imgRows / imgRowsStep;
-        int     totalPartitionsGathered = 0;
-        int     totalPartitionsScatterd = 0;
+        printf("Available workers (threads): %d\n"
+               "Program starting:\n"
+               "debug: %d; "
+               "gui: %d; "
+               "maxIter: %d; "
+               "imgWidth: %d; "
+               "imgHeight: %d; "
+               "imgWidthStep: %d; "
+               "imgHeightStep: %d; \n",
+               np - 1,
+               debug,
+               gui,
+               maxIter,
+               imgCols,
+               imgRows,
+               imgColsStep,
+               imgRowsStep);
+
+        int totalPartitions = imgCols / imgColsStep * imgRows / imgRowsStep;
+        int totalPartitionsGathered = 0;
+        int totalPartitionsScattered = 0;
 
 
         // create tasks
@@ -59,38 +88,41 @@ main(int argc, char **argv)
                 tasks[j][2] = width+imgColsStep;
                 tasks[j][3] = height+imgRowsStep;
 
-                printf("Task created. Task: {%d,%d,%d,%d}\n", tasks[j][0], tasks[j][1], tasks[j][2], tasks[j][3]);
+                if (debug) printf("Task created. Task: {%d,%d,%d,%d}\n", tasks[j][0], tasks[j][1], tasks[j][2], tasks[j][3]);
 
                 j++;
             }
         }
-        printf("Finished creating tasks: %d\n", totalPartitions);
+        if (debug) printf("Finished creating tasks: %d\n", totalPartitions);
 
 
         int **A;
         A = alloc_2d_int(imgRows, imgCols);
 
-        printf("MASTER_INITIAL_IMAGE: \n");
+        if (debug) printf("MASTER_INITIAL_IMAGE: \n");
 
         for (int a = 0; a < imgRows; a++) {
             for (int b = 0; b < imgCols; b++) {
                 A[a][b] = 0;
-                printf("%d", A[a][b]);
+                if (debug) printf("%d", A[a][b]);
             }
-            printf("\n");
+            if (debug) printf("\n");
         }
 
 
-        printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-        printf("~~~~~~~~~~~~~~~~~~~~~~~~ MASTER INITIALIZING ~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-        printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-        for (int i = 1; i < np; i++) {
+        if (debug) printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+               "~~~~~~~~~~~~~~~~ MASTER INITIALIZING ~~~~~~~~~~~~~~~~~~~~\n"
+               "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
 
-            printf("MASTER_preparing_job: Slave_%d\n", i);
-            int x0 = tasks[totalPartitionsScatterd][0];
-            int y0 = tasks[totalPartitionsScatterd][1];
-            int x1 = tasks[totalPartitionsScatterd][2];
-            int y1 = tasks[totalPartitionsScatterd][3];
+        clock_t begin = clock();
+
+        for (int i = 1; i < np && totalPartitionsScattered < totalPartitions; i++) {
+
+            if (debug) printf("MASTER_preparing_job: Slave_%d\n", i);
+            int x0 = tasks[totalPartitionsScattered][0];
+            int y0 = tasks[totalPartitionsScattered][1];
+            int x1 = tasks[totalPartitionsScattered][2];
+            int y1 = tasks[totalPartitionsScattered][3];
 
             int tsk[4];
             tsk[0] = x0;
@@ -99,19 +131,19 @@ main(int argc, char **argv)
             tsk[3] = y1;
 
             MPI_Send(&tsk, 4, MPI_INT, i, 1, MPI_COMM_WORLD);
-            printf("MASTER_sent_TASK: Slave_%d Task: {%d,%d,%d,%d}\n", i, tsk[0], tsk[1], tsk[2], tsk[3]);
+            if (debug) printf("MASTER_sent_TASK: Slave_%d Task: {%d,%d,%d,%d}\n", i, tsk[0], tsk[1], tsk[2], tsk[3]);
 
-            totalPartitionsScatterd++;
+            totalPartitionsScattered++;
         }
 
 
-        printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-        printf("~~~~~~~~~~~~~~~~~~~~~~~~ MASTER WENT TO RECV LOOP ~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-        printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+
+        if (debug) printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+               "~~~~~~~~~~~~~~~~ MASTER STARTED TO RECV LOOP ~~~~~~~~~~~~~~~~~\n"
+               "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
         while (totalPartitionsGathered < totalPartitions) {
 
             int worker;
-
             int tsk[4];
             MPI_Recv(&tsk, 4, MPI_INT, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &status);
 
@@ -125,12 +157,12 @@ main(int argc, char **argv)
             int y1 = tsk[3];
 
             int area = (x1 - x0) * (y1 - y0);
-            printf("MASTER_received_task: Slave_%d Area: %d Task: {%d,%d,%d,%d}\n", status.MPI_SOURCE, area, tsk[0], tsk[1], tsk[2], tsk[3]);
+            if (debug) printf("MASTER_received_task: Slave_%d Area: %d Task: {%d,%d,%d,%d}\n", status.MPI_SOURCE, area, tsk[0], tsk[1], tsk[2], tsk[3]);
 
 
             MPI_Recv(&(B[0][0]), area, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD, &status);
 
-            printf("MASTER_received_job: Slave_%d Area: %d Task: {%d,%d,%d,%d}\n", status.MPI_SOURCE, area, tsk[0], tsk[1], tsk[2], tsk[3]);
+            if (debug) printf("MASTER_received_job: Slave_%d Area: %d Task: {%d,%d,%d,%d}\n", status.MPI_SOURCE, area, tsk[0], tsk[1], tsk[2], tsk[3]);
 
 
             string masterImage = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\nMASTER_RECEIVED_PART\n";
@@ -142,7 +174,7 @@ main(int argc, char **argv)
                 }
                 masterImage += "\n";
             }
-            cout << masterImage;
+            if (debug) cout << masterImage;
 
 
             string masterImage3 = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\nMASTER_IMAGE_BEFORE\n";
@@ -154,7 +186,7 @@ main(int argc, char **argv)
                 }
                 masterImage3 += "\n";
             }
-            cout << masterImage3;
+            if (debug) cout << masterImage3;
             
             // PUT MATRIX
             for (int row = y0, a = 0; row < y1 && a < imgRowsStep; row++, a++) {
@@ -163,7 +195,7 @@ main(int argc, char **argv)
 //                    printf("Task: {%d,%d,%d,%d}; %d, %d\n", tsk[0], tsk[1], tsk[2], tsk[3], row, column);
                 }
             }
-            printf("MATRIX PUT SUCCESSFULLY");
+            if (debug) printf("MATRIX PUT SUCCESSFULLY");
 
             string masterImage2 = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\nMASTER_IMAGE_AFTER\n";
             for (int a = 0; a < imgRows; a++) {
@@ -174,18 +206,18 @@ main(int argc, char **argv)
                 }
                 masterImage2 += "\n";
             }
-            cout << masterImage2;
+            if (gui) cout << masterImage2;
 
             // PUT MATRIX END
 
 
             totalPartitionsGathered++;
 
-            if (totalPartitionsScatterd < totalPartitions) {
-                int x0 = tasks[totalPartitionsScatterd][0];
-                int y0 = tasks[totalPartitionsScatterd][1];
-                int x1 = tasks[totalPartitionsScatterd][2];
-                int y1 = tasks[totalPartitionsScatterd][3];
+            if (totalPartitionsScattered < totalPartitions) {
+                int x0 = tasks[totalPartitionsScattered][0];
+                int y0 = tasks[totalPartitionsScattered][1];
+                int x1 = tasks[totalPartitionsScattered][2];
+                int y1 = tasks[totalPartitionsScattered][3];
 
                 int tsk[4];
                 tsk[0] = x0;
@@ -194,26 +226,33 @@ main(int argc, char **argv)
                 tsk[3] = y1;
 
                 MPI_Send(&tsk, 4, MPI_INT, worker, 1, MPI_COMM_WORLD);
-                printf("MASTER_preparing_ADDITIONAL_job: Slave_%d: {%d,%d,%d,%d}\n", worker, tsk[0], tsk[1], tsk[2], tsk[3]);
+                if (debug) printf("MASTER_preparing_ADDITIONAL_job: Slave_%d: {%d,%d,%d,%d}\n", worker, tsk[0], tsk[1], tsk[2], tsk[3]);
 
-                totalPartitionsScatterd++;
+                totalPartitionsScattered++;
             }
 
         }
 
 
-        printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+        if (debug) printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
                "~~~~~~~~~~~~~~~~~~~~~~~~ MASTER EXIT ~~~~~~~~~~~~~~~~~~~~~~~~~\n"
-               "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+               "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+
+        clock_t end = clock();
+
+        double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
+        printf("Time: %f\n", elapsed_secs);
+
+
+        MPI_Abort(MPI_COMM_WORLD, 1);
 
     } else if (rank != 0) {
         while(1) {
             int **B;
             int tsk[4];
-            int area;
 
             MPI_Recv(&tsk, 4, MPI_INT, 0, 1, MPI_COMM_WORLD, &status);
-            printf("SLAVE_%d_received_TASK: {%d,%d,%d,%d}\n", rank, tsk[0], tsk[1], tsk[2], tsk[3]);
+            if (debug) printf("SLAVE_%d_received_TASK: {%d,%d,%d,%d}\n", rank, tsk[0], tsk[1], tsk[2], tsk[3]);
 
             int x0 = tsk[0];
             int y0 = tsk[1];
@@ -222,15 +261,12 @@ main(int argc, char **argv)
 
             B = alloc_2d_int(imgRowsStep,imgColsStep);
 
-            area = (x1 - x0) * (y1 - y0);
-            printf("Area: %d\n", area);
 
 
-            string slaveJob1 = "";
+//            string slaveJob1 = "";
             for (int row = y0, a = 0; row < y1; row++, a++) {
                 for (int col = x0, b = 0; col < x1; col++, b++) {
 
-//                printf("Received: %d, %d\n", row, column);
 //                    B[a][b] = rank;
                     std::complex<float> z, c = {
 //                            (float)column * 2 / y1 - 1.5f,
@@ -241,10 +277,10 @@ main(int argc, char **argv)
                     int iteration = 0;
                     while(abs(z) < 2 && ++iteration < maxIter)
                         z = pow(z, 2) + c;
-                    slaveJob1 +=  (iteration == maxIter ? '#' : '.');
+//                    slaveJob1 +=  (iteration == maxIter ? '#' : '.');
                     B[a][b] = (iteration == maxIter ? 1 : 0);
                 }
-                slaveJob1 += "\n";
+//                slaveJob1 += "\n";
             }
 
 //            cout << slaveJob1;
@@ -252,13 +288,13 @@ main(int argc, char **argv)
 
             MPI_Send(&tsk, 4, MPI_INT, 0, 1, MPI_COMM_WORLD);
 
-            printf("##############################################\n");
-            printf("Slave sent its task back\n");
-            printf("##############################################\n");
+            if (debug) printf("##############################################\n"
+                    "Slave sent its task back\n"
+                    "##############################################\n");
 
-            MPI_Send(&(B[0][0]), area, MPI_INT, 0, 2, MPI_COMM_WORLD);
+            MPI_Send(&(B[0][0]), imgRowsStep*imgColsStep, MPI_INT, 0, 2, MPI_COMM_WORLD);
 
-            printf("SLAVE_%d_submitted_job: {%d,%d,%d,%d}\n", rank, tsk[0], tsk[1], tsk[2], tsk[3]);
+            if (debug) printf("SLAVE_%d_submitted_job: {%d,%d,%d,%d}\n", rank, tsk[0], tsk[1], tsk[2], tsk[3]);
         }
 
     }
